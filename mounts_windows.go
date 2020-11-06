@@ -281,19 +281,42 @@ func mountPointAlreadyPresent(mounts []Mount, mountPoint string) bool {
 	return false
 }
 
-func appendLogicalDrives(mounts []Mount, warnings []string) ([]Mount, []string) {
-	drivebitmap, err := windows.GetLogicalDrives()
-	if err != nil {
-		warnings = append(warnings, fmt.Sprintf("GetLogicalDrives(): %s", err))
-		return mounts, warnings
+func myWcsLen(str []uint16) (ret int32) {
+	for i, c := range str {
+		if c == 0 {
+			ret = int32(i)
+			return
+		}
 	}
 
-	for i := 0; i < 26; i++ {
-		if (drivebitmap & (1 << i)) == 0 {
-			continue
+	ret = 0
+	return
+}
+
+func appendLogicalDrives(mounts []Mount, warnings []string) ([]Mount, []string) {
+	var mountPointsBuf []uint16
+	mountPointsBufLen := uint32(20)
+	for true {
+		mountPointsBufLen *= 2
+		mountPointsBuf = make([]uint16, mountPointsBufLen + 1)
+		writtenLen, err := windows.GetLogicalDriveStrings(mountPointsBufLen, (*uint16)(unsafe.Pointer(&mountPointsBuf[0])))
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("GetLogicalDriveStrings(): %s", err))
+			return mounts, warnings
 		}
 
-		mountPoint := fmt.Sprintf("%s:\\", string(65+i))
+		if writtenLen < mountPointsBufLen {
+			break
+		}
+	}
+
+	for true {
+		if myWcsLen(mountPointsBuf) == 0 {
+			break
+		}
+
+		mountPoint := windows.UTF16ToString(mountPointsBuf)
+		mountPointsBuf = mountPointsBuf[myWcsLen(mountPointsBuf) + 1:]
 		if mountPointAlreadyPresent(mounts, mountPoint) {
 			continue
 		}
@@ -315,7 +338,7 @@ func mounts() (ret []Mount, warnings []string, err error) {
 		return
 	}
 
-	// Logical devices (from GetLogicalDrives bitflag)
+	// Logical devices (from GetLogicalDriveStrings list)
 	ret, warnings = appendLogicalDrives(ret, warnings)
 
 	// Network devices
